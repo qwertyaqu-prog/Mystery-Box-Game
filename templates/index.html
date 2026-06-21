@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>TEBAK KOTAK</title>
+    <style>
+        :root {
+            --primary-gold: #f1c40f;
+            --bg-color: #00ff00; 
+        }
+        body { 
+            background: var(--bg-color); 
+            margin: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; 
+            height: 100vh; font-family: 'Segoe UI', sans-serif; overflow: hidden; 
+        }
+        #menuScene { text-align: center; }
+        .menu-btn { 
+            background: #1a1a1a; color: var(--primary-gold); padding: 20px 40px; margin: 10px; 
+            border-radius: 15px; border: 4px solid white; cursor: pointer; font-size: 22px; font-weight: bold; 
+        }
+        #gameScene { display: none; text-align: center; width: 100%; position: relative; }
+        
+        .grid { 
+            display: grid; grid-template-columns: repeat(4, 130px); gap: 20px; padding: 30px; 
+            background: rgba(0,0,0,0.85); border-radius: 25px; perspective: 2000px; margin: 0 auto; width: fit-content; 
+        }
+
+        .box { width: 130px; height: 130px; position: relative; transform-style: preserve-3d; transition: transform 0.6s cubic-bezier(0.4, 0, 0.2, 1); cursor: pointer; }
+        .box.revealed { transform: rotateY(180deg); }
+        .box-face { position: absolute; width: 100%; height: 100%; border-radius: 15px; border: 4px solid #fff; display: flex; align-items: center; justify-content: center; backface-visibility: hidden; box-sizing: border-box; }
+        
+        .box-front { background: linear-gradient(135deg, #ff4757, #e84118); color: white; font-size: 60px; font-weight: bold; transform: rotateY(0deg); transition: opacity 0.3s; }
+        /* Huruf hilang saat kotak dibuka */
+        .box.revealed .box-front { opacity: 0; }
+        
+        .box-back { background: white; transform: rotateY(180deg); overflow: hidden; }
+        .box-back img { width: 100%; height: 100%; object-fit: cover; }
+
+        @keyframes sharpShuffle {
+            0% { transform: translate(0, 0) rotate(0deg) scale(1); }
+            50% { transform: translate(var(--mx), var(--my)) rotate(720deg) scale(1.3); z-index: 100; }
+            100% { transform: translate(0, 0) rotate(1080deg) scale(1); }
+        }
+        .shuffling { animation: sharpShuffle 1.2s cubic-bezier(0.45, 0.05, 0.55, 0.95) 1; pointer-events: none; z-index: 50 !important; }
+
+        #zoomOverlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.96); display: none; flex-direction: column; justify-content: center; align-items: center; z-index: 9999; opacity: 0; transition: opacity 0.4s ease; }
+        #zoomOverlay.show { display: flex; opacity: 1; }
+
+        @keyframes prizeEntrance {
+            0% { transform: scale(0) rotate(-10deg); opacity: 0; }
+            70% { transform: scale(1.1) rotate(5deg); opacity: 1; }
+            100% { transform: scale(1) rotate(0deg); opacity: 1; }
+        }
+        .prize-content { text-align: center; opacity: 0; }
+        #zoomOverlay.show .prize-content { animation: prizeEntrance 0.7s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards; opacity: 1; }
+        #zoomImg { max-width: 80vw; max-height: 65vh; border: 10px solid var(--primary-gold); border-radius: 25px; box-shadow: 0 0 50px rgba(241, 196, 15, 0.7); }
+
+        .controls { margin-top: 30px; }
+        .btn-action { padding: 15px 35px; border-radius: 50px; border: none; font-weight: bold; cursor: pointer; margin: 0 10px; color: white; }
+        .btn-peek { background: #3498db; }
+        .btn-shuffle { background: var(--primary-gold); color: black; }
+        .back-btn { position: absolute; top: 25px; left: 25px; background: #333; color: white; padding: 12px 25px; border-radius: 50px; cursor: pointer; border: none; }
+    </style>
+</head>
+<body>
+    <div id="menuScene">
+        <h1 style="-webkit-text-stroke: 1px white; font-size: 50px;">🎁 TEBAK KOTAK 🎁</h1>
+        <div id="menuList"></div>
+    </div>
+    <div id="gameScene">
+        <button class="back-btn" onclick="location.reload()">⬅ MENU</button>
+        <h2 id="catDisplay" style="color: black; font-size: 30px; text-shadow: 1px 1px white;"></h2>
+        <div class="grid" id="gameGrid"></div>
+        <div class="controls">
+            <button id="toggleBtn" class="btn-action btn-peek" onclick="togglePeek()">👁️ LIHAT ISI</button>
+            <button class="btn-action btn-shuffle" onclick="shuffleAnim()">🔀 KOCOK CEPAT</button>
+        </div>
+    </div>
+    <div id="zoomOverlay" onclick="this.classList.remove('show')">
+        <div class="prize-content">
+            <h1 id="congratsText" style="color: var(--primary-gold); font-size: 40px;"></h1>
+            <img id="zoomImg" src="">
+            <p style="color: white; margin-top: 15px; font-weight: bold; opacity: 0.8;">Klik di mana saja untuk tutup</p>
+        </div>
+    </div>
+    <script>
+        let selectedCat = "", isPeeking = false, currentOrder = "";
+        const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
+        
+        async function loadMenu() {
+            const res = await fetch('/api/get_categories');
+            const cats = await res.json();
+            const list = document.getElementById('menuList');
+            list.innerHTML = '';
+            for (let key in cats) {
+                const btn = document.createElement('button');
+                btn.className = 'menu-btn'; btn.innerHTML = cats[key];
+                btn.onclick = () => startGame(key, cats[key]);
+                list.appendChild(btn);
+            }
+        }
+
+        function startGame(key, name) {
+            selectedCat = key;
+            document.getElementById('menuScene').style.display = 'none';
+            document.getElementById('gameScene').style.display = 'block';
+            document.getElementById('catDisplay').innerText = name;
+            syncGame(); setInterval(syncGame, 1000);
+        }
+
+        async function syncGame() {
+            if (isPeeking || !selectedCat || document.querySelector('.shuffling')) return;
+            try {
+                const res = await fetch(`/api/get_boxes/${selectedCat}`);
+                const data = await res.json();
+                const grid = document.getElementById('gameGrid');
+                document.getElementById('congratsText').innerText = data.msg;
+                const newOrder = data.boxes.map(b => b.id).join(',');
+                
+                if (newOrder !== currentOrder) {
+                    grid.innerHTML = '';
+                    data.boxes.forEach((box, index) => {
+                        const div = document.createElement('div');
+                        div.className = 'box';
+                        div.onclick = function() { reveal(this, box.content); };
+                        
+                        // Abjad tetap berdasarkan urutan visual (index), bukan data ID
+                        const letter = alphabet[index] || (index + 1);
+                        
+                        div.innerHTML = `
+                            <div class="box-face box-front">${letter}</div>
+                            <div class="box-face box-back"><img src="${box.content}"></div>
+                        `;
+                        grid.appendChild(div);
+                    });
+                    currentOrder = newOrder;
+                }
+            } catch (err) {}
+        }
+
+        function togglePeek() {
+            const boxes = document.querySelectorAll('.box');
+            isPeeking = !isPeeking;
+            boxes.forEach(b => isPeeking ? b.classList.add('revealed') : b.classList.remove('revealed'));
+            document.getElementById('toggleBtn').innerHTML = isPeeking ? "🙈 TUTUP" : "👁️ LIHAT ISI";
+        }
+
+        function reveal(el, src) {
+            if (isPeeking || el.classList.contains('revealed') || document.querySelector('.shuffling')) return;
+            el.classList.add('revealed');
+            setTimeout(() => {
+                if (!isPeeking) {
+                    document.getElementById('zoomImg').src = src;
+                    document.getElementById('zoomOverlay').classList.add('show');
+                }
+            }, 650);
+        }
+
+        function shuffleAnim() {
+            const boxes = document.querySelectorAll('.box');
+            const grid = document.querySelector('.grid');
+            const gridRect = grid.getBoundingClientRect();
+            isPeeking = false;
+            document.getElementById('toggleBtn').innerHTML = "👁️ LIHAT ISI";
+
+            boxes.forEach(box => {
+                box.classList.remove('revealed');
+                const boxRect = box.getBoundingClientRect();
+                const mx = (gridRect.left + gridRect.width/2) - (boxRect.left + boxRect.width/2);
+                const my = (gridRect.top + gridRect.height/2) - (boxRect.top + boxRect.width/2);
+                box.style.setProperty('--mx', `${mx}px`);
+                box.style.setProperty('--my', `${my}px`);
+                box.classList.add('shuffling');
+            });
+
+            setTimeout(() => { 
+                boxes.forEach(box => box.classList.remove('shuffling')); 
+            }, 1200);
+        }
+        loadMenu();
+    </script>
+</body>
+</html>
